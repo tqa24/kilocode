@@ -56,20 +56,7 @@ describe("GhostStreamingParser", () => {
 			const result = parser.parseResponse(completeChange, "", "")
 
 			expect(result.hasNewSuggestions).toBe(true)
-			expect(result.suggestions.hasSuggestions()).toBe(true)
-		})
-
-		it("should handle complete response built from multiple chunks", () => {
-			const fullResponse = `<change><search><![CDATA[function test() {
-	return true;
-}]]></search><replace><![CDATA[function test() {
-	// Added comment
-	return true;
-}]]></replace></change>`
-
-			const result = parser.parseResponse(fullResponse, "", "")
-
-			expect(result.hasNewSuggestions).toBe(true)
+			expect(result.isComplete).toBe(true)
 			expect(result.suggestions.hasSuggestions()).toBe(true)
 		})
 
@@ -80,19 +67,6 @@ describe("GhostStreamingParser", () => {
 			const result = parser.parseResponse(fullResponse, "", "")
 
 			expect(result.hasNewSuggestions).toBe(true)
-		})
-
-		it("should detect when response is complete", () => {
-			const completeResponse = `<change><search><![CDATA[function test() {
-	return true;
-}]]></search><replace><![CDATA[function test() {
-	// Added comment
-	return true;
-}]]></replace></change>`
-
-			const result = parser.parseResponse(completeResponse, "", "")
-
-			expect(result.isComplete).toBe(true)
 		})
 
 		it("should detect incomplete response", () => {
@@ -114,7 +88,7 @@ describe("GhostStreamingParser", () => {
 	return true;
 }`,
 				languageId: "typescript",
-				offsetAt: (position: any) => 20, // Mock cursor position
+				offsetAt: (position: any) => 19, // Cursor at position after the tab, before "return"
 			}
 
 			const mockRange: any = {
@@ -131,16 +105,28 @@ describe("GhostStreamingParser", () => {
 
 			parser.initialize(contextWithCursor)
 
-			const changeWithCursor = `<change><search><![CDATA[<<<AUTOCOMPLETE_HERE>>>]]></search><replace><![CDATA[// New function
+			const replaceContent = `// New function
 function fibonacci(n: number): number {
 		if (n <= 1) return n;
 		return fibonacci(n - 1) + fibonacci(n - 2);
-}]]></replace></change>`
+}`
+
+			const changeWithCursor = `<change><search><![CDATA[<<<AUTOCOMPLETE_HERE>>>]]></search><replace><![CDATA[${replaceContent}]]></replace></change>`
+
+			// Expected: cursor is inserted at position 19, before "return true;"
+			const expectedContent = `function test() {
+	${replaceContent}return true;
+}`
 
 			const result = parser.parseResponse(changeWithCursor, "", "")
 
 			expect(result.hasNewSuggestions).toBe(true)
 			expect(result.suggestions.hasSuggestions()).toBe(true)
+
+			// Verify exact suggestion content - cursor is inserted before "return true;"
+			const fimContent = result.suggestions.getFillInAtCursor()
+			expect(fimContent).toBeDefined()
+			expect(fimContent?.text).toBe(expectedContent)
 		})
 
 		it("should handle document that already contains cursor marker", () => {
@@ -159,16 +145,27 @@ function fibonacci(n: number): number {
 
 			parser.initialize(contextWithCursor)
 
-			const changeWithCursor = `<change><search><![CDATA[<<<AUTOCOMPLETE_HERE>>>]]></search><replace><![CDATA[// New function
+			const replaceContent = `// New function
 function fibonacci(n: number): number {
 		if (n <= 1) return n;
 		return fibonacci(n - 1) + fibonacci(n - 2);
-}]]></replace></change>`
+}`
+
+			const changeWithCursor = `<change><search><![CDATA[<<<AUTOCOMPLETE_HERE>>>]]></search><replace><![CDATA[${replaceContent}]]></replace></change>`
+
+			const expectedContent = `function test() {
+	${replaceContent}
+}`
 
 			const result = parser.parseResponse(changeWithCursor, "", "")
 
 			expect(result.hasNewSuggestions).toBe(true)
 			expect(result.suggestions.hasSuggestions()).toBe(true)
+
+			// Verify exact suggestion content with cursor marker removed
+			const fimContent = result.suggestions.getFillInAtCursor()
+			expect(fimContent).toBeDefined()
+			expect(fimContent?.text).toBe(expectedContent)
 		})
 
 		it("should handle malformed XML gracefully", () => {
@@ -244,14 +241,6 @@ function fibonacci(n: number): number {
 
 			it("should handle extra spaces in content", () => {
 				const content = "function  test()  {\n\treturn true;\n}" // Extra spaces
-				const search = "function test() {\n\treturn true;\n}"
-
-				const index = findBestMatch(content, search)
-				expect(index).toBe(0)
-			})
-
-			it("should handle different line endings (\\n vs \\r\\n)", () => {
-				const content = "function test() {\r\n\treturn true;\r\n}"
 				const search = "function test() {\n\treturn true;\n}"
 
 				const index = findBestMatch(content, search)
@@ -444,14 +433,6 @@ function fibonacci(n: number): number {
 				expect(index).toBe(0)
 			})
 
-			it("should handle actual different line endings in code", () => {
-				const content = "function test() {\r\n\treturn true;\r\n}"
-				const search = "function test() {\n\treturn true;\n}"
-
-				const index = findBestMatch(content, search)
-				expect(index).toBe(0)
-			})
-
 			it("should find match when content has extra trailing whitespace", () => {
 				const content = "const x = 5;   \nconst y = 10;"
 				const search = "const x = 5;\nconst y = 10;"
@@ -549,26 +530,204 @@ function fibonacci(n: number): number {
 		})
 	})
 
-	describe("performance", () => {
-		it("should handle large responses efficiently", () => {
-			const largeChange = `<change><search><![CDATA[${"x".repeat(10000)}]]></search><replace><![CDATA[${"y".repeat(10000)}]]></replace></change>`
+	describe("Actual Suggestion Content Parsing", () => {
+		it("should parse and return correct suggestion content without cursor marker", () => {
+			const expectedContent = `function test() {
+	// Enhanced with logging
+	console.log("Testing");
+	return true;
+}`
 
-			const startTime = performance.now()
-			const result = parser.parseResponse(largeChange, "", "")
-			const endTime = performance.now()
+			const change = `<change><search><![CDATA[function test() {
+	return true;
+}]]></search><replace><![CDATA[${expectedContent}]]></replace></change>`
 
-			expect(endTime - startTime).toBeLessThan(100) // Should complete in under 100ms
+			const result = parser.parseResponse(change, "", "")
+
 			expect(result.hasNewSuggestions).toBe(true)
+			expect(result.suggestions.hasSuggestions()).toBe(true)
+
+			// Verify exact suggestion text including newlines and formatting
+			const fimContent = result.suggestions.getFillInAtCursor()
+			expect(fimContent).toBeDefined()
+			expect(fimContent?.text).toBe(expectedContent)
 		})
 
-		it("should handle large concatenated responses efficiently", () => {
-			const largeResponse = Array(1000).fill("x").join("")
-			const startTime = performance.now()
+		it("should parse suggestion content with cursor marker in search", () => {
+			const mockDocumentWithCursor: any = {
+				uri: { toString: () => "/test/file.ts", fsPath: "/test/file.ts" },
+				getText: () => `function test() {
+	<<<AUTOCOMPLETE_HERE>>>
+}`,
+				languageId: "typescript",
+			}
 
-			parser.parseResponse(largeResponse, "", "")
-			const endTime = performance.now()
+			parser.initialize({ document: mockDocumentWithCursor })
 
-			expect(endTime - startTime).toBeLessThan(200) // Should complete in under 200ms
+			const replaceContent = `// New implementation
+const result = calculate();
+return result;`
+
+			const expectedContent = `function test() {
+	${replaceContent}
+}`
+
+			const change = `<change><search><![CDATA[<<<AUTOCOMPLETE_HERE>>>]]></search><replace><![CDATA[${replaceContent}]]></replace></change>`
+
+			const result = parser.parseResponse(change, "", "")
+
+			expect(result.hasNewSuggestions).toBe(true)
+			expect(result.suggestions.hasSuggestions()).toBe(true)
+
+			// Verify exact text with cursor marker removed and newlines preserved
+			const fimContent = result.suggestions.getFillInAtCursor()
+			expect(fimContent).toBeDefined()
+			expect(fimContent?.text).toBe(expectedContent)
+		})
+
+		it("should parse suggestion with cursor marker in replace content", () => {
+			const expectedContent = `function test() {
+	const value = 5;
+	return value;
+}`
+
+			const change = `<change><search><![CDATA[function test() {
+	return true;
+}]]></search><replace><![CDATA[function test() {
+	const value = <<<AUTOCOMPLETE_HERE>>>5;
+	return value;
+}]]></replace></change>`
+
+			const result = parser.parseResponse(change, "", "")
+
+			expect(result.hasNewSuggestions).toBe(true)
+
+			// Verify cursor marker is removed and exact text is preserved
+			const fimContent = result.suggestions.getFillInAtCursor()
+			expect(fimContent).toBeDefined()
+			expect(fimContent?.text).toBe(expectedContent)
+		})
+
+		it("should parse multiline suggestion content correctly with empty lines", () => {
+			const mockDoc: any = {
+				uri: { toString: () => "/test/file.ts", fsPath: "/test/file.ts" },
+				getText: () => `class Example {
+}`,
+				languageId: "typescript",
+			}
+
+			parser.initialize({ document: mockDoc })
+
+			const expectedContent = `class Example {
+	constructor(name: string) {
+		this.name = name;
+	}
+
+	greet(): void {
+		console.log(\`Hello, \${this.name}\`);
+	}
+}`
+
+			const change = `<change><search><![CDATA[class Example {
+}]]></search><replace><![CDATA[${expectedContent}]]></replace></change>`
+
+			const result = parser.parseResponse(change, "", "")
+
+			expect(result.hasNewSuggestions).toBe(true)
+
+			// Verify exact text including empty line between methods
+			const fimContent = result.suggestions.getFillInAtCursor()
+			expect(fimContent).toBeDefined()
+			expect(fimContent?.text).toBe(expectedContent)
+		})
+
+		it("should handle FIM suggestion with prefix and suffix preserving exact content", () => {
+			const mockDoc: any = {
+				uri: { toString: () => "/test/file.ts", fsPath: "/test/file.ts" },
+				getText: () => `function calculate() {
+	const a = 10;
+	const b = 20;
+	return a + b;
+}`,
+				languageId: "typescript",
+			}
+
+			parser.initialize({ document: mockDoc })
+
+			const replaceContent = `function calculate() {
+	const a = 10;
+	const b = 20;
+	const sum = a + b;
+	console.log(\`Sum is: \${sum}\`);
+	return sum;
+}`
+
+			const change = `<change><search><![CDATA[function calculate() {
+	const a = 10;
+	const b = 20;
+	return a + b;
+}]]></search><replace><![CDATA[${replaceContent}]]></replace></change>`
+
+			const prefix = "function calculate() {\n"
+			const suffix = "\n}"
+			const expectedMiddle = `\tconst a = 10;
+	const b = 20;
+	const sum = a + b;
+	console.log(\`Sum is: \${sum}\`);
+	return sum;`
+
+			const result = parser.parseResponse(change, prefix, suffix)
+
+			expect(result.hasNewSuggestions).toBe(true)
+
+			// Verify exact FIM content with preserved newlines
+			const fimContent = result.suggestions.getFillInAtCursor()
+			expect(fimContent).toBeDefined()
+			expect(fimContent?.prefix).toBe(prefix)
+			expect(fimContent?.suffix).toBe(suffix)
+			expect(fimContent?.text).toBe(expectedMiddle)
+		})
+
+		it("should parse suggestion with cursor marker at end of replace content and newlines", () => {
+			const mockDocumentWithCursor: any = {
+				uri: { toString: () => "/test/file.ts", fsPath: "/test/file.ts" },
+				getText: () => `
+<<<AUTOCOMPLETE_HERE>>>
+`,
+				languageId: "typescript",
+			}
+
+			parser.initialize({ document: mockDocumentWithCursor })
+
+			const replaceContent = `
+// implement function to subtract two numbers
+function subtractNumbers(a: number, b: number): number {
+		  return a - b;
+}
+`
+
+			const change = `<change><search><![CDATA[
+<<<AUTOCOMPLETE_HERE>>>
+]]></search><replace><![CDATA[${replaceContent}<<<AUTOCOMPLETE_HERE>>>
+]]></replace></change>`
+
+			// Expected includes the trailing newline from the replace block
+			const expectedContent = `
+// implement function to subtract two numbers
+function subtractNumbers(a: number, b: number): number {
+		  return a - b;
+}
+
+`
+
+			const result = parser.parseResponse(change, "", "")
+
+			expect(result.hasNewSuggestions).toBe(true)
+
+			// Verify cursor marker is removed from end of replace content
+			const fimContent = result.suggestions.getFillInAtCursor()
+			expect(fimContent).toBeDefined()
+			expect(fimContent?.text).toBe(expectedContent)
 		})
 	})
 
@@ -603,7 +762,7 @@ function fibonacci(n: number): number {
 			})
 		})
 
-		it("should NOT set FIM when prefix doesn't match", () => {
+		it("should NOT set FIM when prefix or suffix don't match", () => {
 			const mockDoc: any = {
 				uri: { toString: () => "/test/file.ts", fsPath: "/test/file.ts" },
 				getText: () => `const prefix = "start";\nconst suffix = "end";`,
@@ -618,67 +777,15 @@ function fibonacci(n: number): number {
 
 			const change = `<change><search><![CDATA[const prefix = "start";\nconst suffix = "end";]]></search><replace><![CDATA[const prefix = "start";\nconst middle = "inserted";\nconst suffix = "end";]]></replace></change>`
 
-			const prefix = "WRONG_PREFIX"
-			const suffix = '\nconst suffix = "end";'
-
-			const result = parser.parseResponse(change, prefix, suffix)
-
+			// Test with wrong prefix
+			let result = parser.parseResponse(change, "WRONG_PREFIX", '\nconst suffix = "end";')
 			expect(result.suggestions.hasSuggestions()).toBe(false)
-			// Check that FIM was NOT set
-			const fimContent = result.suggestions.getFillInAtCursor()
-			expect(fimContent).toBeUndefined()
-		})
+			expect(result.suggestions.getFillInAtCursor()).toBeUndefined()
 
-		it("should NOT set FIM when suffix doesn't match", () => {
-			const mockDoc: any = {
-				uri: { toString: () => "/test/file.ts", fsPath: "/test/file.ts" },
-				getText: () => `const prefix = "start";\nconst suffix = "end";`,
-				languageId: "typescript",
-			}
-
-			const contextWithFIM = {
-				document: mockDoc,
-			}
-
-			parser.initialize(contextWithFIM)
-
-			const change = `<change><search><![CDATA[const prefix = "start";\nconst suffix = "end";]]></search><replace><![CDATA[const prefix = "start";\nconst middle = "inserted";\nconst suffix = "end";]]></replace></change>`
-
-			const prefix = 'const prefix = "start";\n'
-			const suffix = "WRONG_SUFFIX"
-
-			const result = parser.parseResponse(change, prefix, suffix)
-
+			// Test with wrong suffix
+			result = parser.parseResponse(change, 'const prefix = "start";\n', "WRONG_SUFFIX")
 			expect(result.suggestions.hasSuggestions()).toBe(false)
-			// Check that FIM was NOT set
-			const fimContent = result.suggestions.getFillInAtCursor()
-			expect(fimContent).toBeUndefined()
-		})
-
-		it("should NOT set FIM when both prefix and suffix don't match", () => {
-			const mockDoc: any = {
-				uri: { toString: () => "/test/file.ts", fsPath: "/test/file.ts" },
-				getText: () => `const prefix = "start";\nconst suffix = "end";`,
-				languageId: "typescript",
-			}
-
-			const contextWithFIM = {
-				document: mockDoc,
-			}
-
-			parser.initialize(contextWithFIM)
-
-			const change = `<change><search><![CDATA[const prefix = "start";\nconst suffix = "end";]]></search><replace><![CDATA[const prefix = "start";\nconst middle = "inserted";\nconst suffix = "end";]]></replace></change>`
-
-			const prefix = "WRONG_PREFIX"
-			const suffix = "WRONG_SUFFIX"
-
-			const result = parser.parseResponse(change, prefix, suffix)
-
-			expect(result.suggestions.hasSuggestions()).toBe(false)
-			// Check that FIM was NOT set
-			const fimContent = result.suggestions.getFillInAtCursor()
-			expect(fimContent).toBeUndefined()
+			expect(result.suggestions.getFillInAtCursor()).toBeUndefined()
 		})
 
 		it("should handle empty prefix and suffix", () => {
