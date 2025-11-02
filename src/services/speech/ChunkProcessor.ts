@@ -76,7 +76,10 @@ export class ChunkProcessor extends EventEmitter implements IChunkProcessor {
 			const lastChunkName = `chunk_${String(this.lastChunkNumber).padStart(3, "0")}.webm`
 			const lastChunkPath = path.join(this.outputDir, lastChunkName)
 
-			// Emit and wait a moment for processing to start
+			// Safety delay: Ensures FFmpeg has fully flushed file buffers to disk
+			// before downstream processing begins. While FFmpeg has closed the file,
+			// filesystem write caching may still be in progress. 100ms is sufficient
+			// for OS buffer flush on all platforms.
 			this.emit("chunkReady", lastChunkPath)
 			await new Promise((resolve) => setTimeout(resolve, 100))
 		}

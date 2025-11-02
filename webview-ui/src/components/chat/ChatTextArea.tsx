@@ -250,12 +250,10 @@ export const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					setStreamingText("")
 					const cleanedText = message.text || ""
 					setInputValue(cleanedText)
-					// Auto-send the message after a brief delay to ensure state updates
-					setTimeout(() => {
-						if (cleanedText.trim()) {
-							onSend()
-						}
-					}, 100)
+					// React 18+ automatically batches state updates, so we can call onSend directly
+					if (cleanedText.trim()) {
+						onSend()
+					}
 				} else if (message.type === "speechStreamingStopped") {
 					setIsRecording(false)
 					setVolumeLevel(0)

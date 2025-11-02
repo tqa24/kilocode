@@ -1,6 +1,7 @@
 // kilocode_change - new file: Streaming speech message handlers
 import { ClineProvider } from "./ClineProvider"
 import { SpeechService, ProgressiveResult } from "../../services/speech/SpeechService"
+import { HOT_WORD_PHRASE } from "../../services/speech/speechConstants"
 
 /**
  * Cancel speech recording
@@ -112,7 +113,7 @@ export async function handleStartStreamingSpeech(provider: ClineProvider): Promi
 			overlapDurationSeconds: 1,
 			language: "en",
 			hotWordEnabled: true,
-			hotWordPhrase: "send the command",
+			hotWordPhrase: HOT_WORD_PHRASE,
 		})
 
 		if (result.success) {
