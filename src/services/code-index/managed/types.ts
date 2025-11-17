@@ -113,8 +113,8 @@ export interface ScanResult {
 export interface ManifestFileEntry {
 	/** Relative file path */
 	filePath: string
-	/** Array of chunk hashes for this file (for accurate change detection) */
-	chunkHashes: string[]
+	/** Hash of the entire file content (for accurate change detection) */
+	fileHash: string
 	/** Number of chunks for this file */
 	chunkCount: number
 	/** When this file was last indexed */
