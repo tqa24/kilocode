@@ -9,6 +9,18 @@ import { FillInAtCursorSuggestion } from "../HoleFiller"
 import { MockTextDocument } from "../../../mocking/MockTextDocument"
 import { GhostModel } from "../../GhostModel"
 import { RooIgnoreController } from "../../../../core/ignore/RooIgnoreController"
+import { TelemetryService } from "@roo-code/telemetry"
+import { TelemetryEventName } from "@roo-code/types"
+
+// Mock TelemetryService
+vi.mock("@roo-code/telemetry", () => ({
+	TelemetryService: {
+		hasInstance: vi.fn().mockReturnValue(true),
+		instance: {
+			captureEvent: vi.fn(),
+		},
+	},
+}))
 
 // Mock vscode InlineCompletionTriggerKind enum and event listeners
 vi.mock("vscode", async () => {
@@ -26,6 +38,10 @@ vi.mock("vscode", async () => {
 		workspace: {
 			...actual.workspace,
 			onDidChangeTextDocument: vi.fn(() => ({ dispose: vi.fn() })),
+		},
+		commands: {
+			...actual.commands,
+			registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
 		},
 	}
 })
@@ -1573,6 +1589,82 @@ describe("GhostInlineCompletionProvider", () => {
 			const controller = await mockIgnoreController!
 			expect(controller.validateAccess).toHaveBeenCalledTimes(1)
 			expect(controller.validateAccess).toHaveBeenCalledWith(mockDocument.fileName)
+		})
+	})
+
+	describe("telemetry tracking", () => {
+		beforeEach(() => {
+			vi.mocked(TelemetryService.instance.captureEvent).mockClear()
+		})
+
+		it("should track acceptance when suggestion is accepted via command", async () => {
+			// Capture the registered command callback
+			let acceptCallback: () => void = () => {}
+			vi.mocked(vscode.commands.registerCommand).mockImplementation((cmd, callback) => {
+				if (cmd === "kilocode.ghost.inlineAssist.accepted") {
+					acceptCallback = callback as () => void
+				}
+				return { dispose: vi.fn() }
+			})
+
+			// Create new provider to capture the command
+			provider = new GhostInlineCompletionProvider(
+				mockModel,
+				mockCostTrackingCallback,
+				() => mockSettings,
+				mockContextProvider,
+			)
+
+			// Set up and show a suggestion
+			provider.updateSuggestions({
+				text: "console.log('test');",
+				prefix: "const x = 1",
+				suffix: "\nconst y = 2",
+			})
+			await provideWithDebounce(mockDocument, mockPosition, mockContext, mockToken)
+
+			// Simulate accepting the suggestion
+			acceptCallback()
+
+			expect(TelemetryService.instance.captureEvent).toHaveBeenCalledWith(
+				TelemetryEventName.INLINE_ASSIST_ACCEPT_SUGGESTION,
+			)
+		})
+
+		it("should track rejection when no suggestion is available", async () => {
+			// Mock model to return empty response
+			vi.mocked(mockModel.generateResponse).mockResolvedValue({
+				cost: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+			})
+
+			await provideWithDebounce(mockDocument, mockPosition, mockContext, mockToken)
+
+			expect(TelemetryService.instance.captureEvent).toHaveBeenCalledWith(
+				TelemetryEventName.INLINE_ASSIST_REJECT_SUGGESTION,
+			)
+		})
+
+		it("should track rejection after timeout if suggestion not accepted", async () => {
+			// Set up a suggestion
+			provider.updateSuggestions({
+				text: "console.log('test');",
+				prefix: "const x = 1",
+				suffix: "\nconst y = 2",
+			})
+
+			await provideWithDebounce(mockDocument, mockPosition, mockContext, mockToken)
+
+			// Clear previous calls and advance time
+			vi.mocked(TelemetryService.instance.captureEvent).mockClear()
+			await vi.advanceTimersByTimeAsync(10000)
+
+			expect(TelemetryService.instance.captureEvent).toHaveBeenCalledWith(
+				TelemetryEventName.INLINE_ASSIST_REJECT_SUGGESTION,
+			)
 		})
 	})
 })
